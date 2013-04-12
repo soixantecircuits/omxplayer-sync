@@ -24,8 +24,8 @@ from threading import local
 from optparse import OptionParser, BadOptionError, AmbiguousOptionError
 
 OMXPLAYER = 'omxplayer'
-TOLERANCE = 0.2
-ADJUST = -0.4
+TOLERANCE = 0.2 # mplayer uses 1 s
+ADJUST = -0.4 # is that the average transmission time between master and local? is it really useful?
 PORT = 1666
 
 REGEX_STATUS = re.compile(r"V :\s*([\d.]+).*")
@@ -62,9 +62,10 @@ def read_position_master():
    global filename_master
 
    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
-   sock.bind(('0.0.0.0', PORT))
+   sock.bind(('0.0.0.0', PORT)) # bind to all network interfaces
 
    while True:
+       # TODO: detect master quit
        data = sock.recvfrom(1024)[0].split('%', 1)
        position_master = float(data[0]) + ADJUST
        filename_master = data[1]
@@ -107,12 +108,15 @@ def play_file(filename, options, omxplayer_options):
     thread.start_new_thread(read_position_local, (process,options))
 
     if options.master:
+        # AF_INET is an address family where address is defined by (host, port)
+        # SOCK_DGRAM means datagram socket, a connectionless network socket (UDP)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
         sock.connect((options.destination, PORT))
 
     wait_for_sync = False
+    # TODO: add timeout while waiting for master message
     while True:
-        sleep(0.05)
+        sleep(0.05) # wait 50 ms, 1 frame at 25 Hz is 40 ms
 
         if position_local is False:
            position_local = 0.0
@@ -124,7 +128,7 @@ def play_file(filename, options, omxplayer_options):
             try:
                 sock.send('%s%%%s' % (str(position_local), filename))
             except socket.error:
-                pass
+                pass # pass means nop, no-operation
 
         if options.slave:
             deviation = position_master - position_local
@@ -134,6 +138,7 @@ def play_file(filename, options, omxplayer_options):
 
             if wait_for_sync:
                 if deviation > 0:
+                    # pause
                     process.send('p')
                     wait_for_sync = False
                 if position_local < (position_master - TOLERANCE):
@@ -142,19 +147,21 @@ def play_file(filename, options, omxplayer_options):
                     wait_for_sync = False
                 else:
                     sleep(0.05)
-                    continue
+                    continue 
 
             if abs(deviation) > TOLERANCE \
             and filename == filename_master \
             and not position_master == 0.0:
+                # TODO: do multiple skip if deviation is high?
+                # TODO: do exact seek position
                 if deviation > 0: # we are behind
                     if options.verbose:
                         print "skip forward..."
-                    process.send('\x1B[C')
+                    process.send('\x1B[C') # right key +30 ms
                 elif deviation < 0: # we are ahead
                     if options.verbose:
                         print "skip backwards..."
-                    process.send('\x1B[D')
+                    process.send('\x1B[D') # left key -30 ms
 
                 sleep(1)
                 process.send('p')
